@@ -51,15 +51,19 @@ class TestZipExcept(unittest.TestCase):
         
         # Should be excluded
         self.assertTrue(should_exclude(
-            os.path.join(self.test_dir, "exclude_file.log"), patterns))
+            os.path.join(self.test_dir, "exclude_file.log"), 
+            self.test_dir, patterns))
         self.assertTrue(should_exclude(
-            os.path.join(self.test_dir, "exclude_dir"), patterns))
+            os.path.join(self.test_dir, "exclude_dir"),
+            self.test_dir, patterns))
         
         # Should be included
         self.assertFalse(should_exclude(
-            os.path.join(self.test_dir, "include_file.txt"), patterns))
+            os.path.join(self.test_dir, "include_file.txt"),
+            self.test_dir, patterns))
         self.assertFalse(should_exclude(
-            os.path.join(self.test_dir, "include_dir"), patterns))
+            os.path.join(self.test_dir, "include_dir"),
+            self.test_dir, patterns))
     
     def test_create_zip_archive(self):
         """Test creating a zip archive with exclusions"""
@@ -67,7 +71,7 @@ class TestZipExcept(unittest.TestCase):
         create_archive(
             output, 
             "zip", 
-            [self.test_dir], 
+            self.test_dir, 
             os.path.join(self.test_dir, ".tarignore")
         )
         
@@ -92,8 +96,9 @@ class TestZipExcept(unittest.TestCase):
         create_archive(
             output, 
             "tar", 
-            [self.test_dir], 
-            os.path.join(self.test_dir, ".tarignore")
+            self.test_dir, 
+            os.path.join(self.test_dir, ".tarignore"),
+            compress=True
         )
         
         # Verify the tar file was created

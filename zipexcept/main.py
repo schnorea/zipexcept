@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 ZipExcept - Create tar or zip archives while respecting .tarignore rules
+
+This application creates tar or zip archives of a directory while maintaining the
+directory structure but excluding files, directories, and wildcards that match patterns
+found in a .tarignore file.
 """
 import os
 import tarfile
@@ -27,89 +31,112 @@ def read_tarignore(tarignore_path: str) -> List[str]:
     return patterns
 
 
-def should_exclude(path: str, patterns: List[str]) -> bool:
+def should_exclude(path: str, base_dir: str, patterns: List[str]) -> bool:
     """Determine if a path should be excluded based on the ignore patterns."""
-    # Convert path to relative path for matching
-    rel_path = path
+    # Extract the relative path for better pattern matching
+    rel_path = os.path.relpath(path, base_dir)
+    filename = os.path.basename(path)
+    
     for pattern in patterns:
-        # Check for directory-specific patterns
+        # Skip empty patterns
+        if not pattern:
+            continue
+            
+        # Check directory-specific patterns (ending with /)
         if pattern.endswith('/'):
             if os.path.isdir(path) and fnmatch.fnmatch(rel_path, pattern[:-1] + '*'):
                 return True
-        # Check regular patterns
-        elif fnmatch.fnmatch(rel_path, pattern):
+                
+        # Check for wildcard patterns
+        elif '*' in pattern or '?' in pattern or '[' in pattern:
+            # Match against both relative path and just the filename
+            if fnmatch.fnmatch(rel_path, pattern) or fnmatch.fnmatch(filename, pattern):
+                return True
+                
+        # Check exact file/dir matches
+        elif rel_path == pattern or filename == pattern:
             return True
+            
     return False
 
 
-def collect_files(paths: List[str], ignore_patterns: List[str]) -> Set[str]:
+def collect_files(source_dir: str, ignore_patterns: List[str]) -> Set[str]:
     """
-    Recursively collect files from the given paths, 
+    Recursively collect files from the given source directory, 
     excluding those that match the ignore patterns.
     """
     files_to_include = set()
-    for path in paths:
-        path = os.path.abspath(path)
-        if os.path.isdir(path):
-            for root, dirs, files in os.walk(path):
-                # Filter directories to avoid traversing excluded ones
-                dirs[:] = [d for d in dirs 
-                          if not should_exclude(os.path.join(root, d), ignore_patterns)]
-                
-                # Filter files
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    if not should_exclude(file_path, ignore_patterns):
-                        files_to_include.add(file_path)
-        else:
-            # Single file
-            if not should_exclude(path, ignore_patterns):
-                files_to_include.add(path)
+    source_dir = os.path.abspath(source_dir)
+    
+    if not os.path.isdir(source_dir):
+        print(f"Error: '{source_dir}' is not a directory", file=sys.stderr)
+        sys.exit(1)
+        
+    for root, dirs, files in os.walk(source_dir):
+        # Filter directories to avoid traversing excluded ones
+        dirs[:] = [d for d in dirs 
+                  if not should_exclude(os.path.join(root, d), source_dir, ignore_patterns)]
+        
+        # Filter files
+        for file in files:
+            file_path = os.path.join(root, file)
+            if not should_exclude(file_path, source_dir, ignore_patterns):
+                files_to_include.add(file_path)
     
     return files_to_include
 
 
 def create_archive(archive_name: str, archive_type: str, 
-                  sources: List[str], tarignore_path: Optional[str] = None) -> None:
+                  source_dir: str, tarignore_path: Optional[str] = None,
+                  compress: bool = False) -> None:
     """
-    Create an archive (tar or zip) of the specified sources,
+    Create an archive (tar or zip) of the specified source directory,
     respecting the patterns in the .tarignore file.
+    
+    Args:
+        archive_name: Name of the output archive file
+        archive_type: Type of archive ('tar' or 'zip')
+        source_dir: Source directory to archive
+        tarignore_path: Path to the .tarignore file
+        compress: Whether to compress the tar archive (for tar only)
     """
     # Read .tarignore patterns if present
     ignore_patterns = []
     if tarignore_path:
         if os.path.exists(tarignore_path):
             ignore_patterns = read_tarignore(tarignore_path)
+            print(f"Using ignore patterns from {tarignore_path}")
         else:
             print(f"Warning: .tarignore file '{tarignore_path}' not found.", file=sys.stderr)
     
     # Collect files to include
-    files_to_include = collect_files(sources, ignore_patterns)
+    files_to_include = collect_files(source_dir, ignore_patterns)
+    
+    # Get the absolute path of the source directory for path calculations
+    source_dir = os.path.abspath(source_dir)
     
     print(f"Creating {archive_type} archive with {len(files_to_include)} files...")
     
     # Create the archive
     if archive_type == 'tar':
-        with tarfile.open(archive_name, 'w:gz') as tar:
-            base_dirs = set(os.path.dirname(p) for p in sources)
-            common_prefix = os.path.commonpath(base_dirs) if len(base_dirs) > 1 else ""
-            
+        # Use 'w:gz' for compressed tar or 'w' for uncompressed
+        mode = 'w:gz' if compress else 'w'
+        with tarfile.open(archive_name, mode) as tar:
             for file_path in files_to_include:
-                # Preserve directory structure but make it relative to common prefix
-                arcname = os.path.relpath(file_path, common_prefix) if common_prefix else os.path.basename(file_path)
+                # Preserve directory structure relative to source_dir
+                arcname = os.path.relpath(file_path, os.path.dirname(source_dir))
                 tar.add(file_path, arcname=arcname)
+                print(f"Added: {arcname}", end='\r')
     
     elif archive_type == 'zip':
         with zipfile.ZipFile(archive_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            base_dirs = set(os.path.dirname(p) for p in sources)
-            common_prefix = os.path.commonpath(base_dirs) if len(base_dirs) > 1 else ""
-            
             for file_path in files_to_include:
-                # Preserve directory structure but make it relative to common prefix
-                arcname = os.path.relpath(file_path, common_prefix) if common_prefix else os.path.basename(file_path)
+                # Preserve directory structure relative to source_dir
+                arcname = os.path.relpath(file_path, os.path.dirname(source_dir))
                 zipf.write(file_path, arcname=arcname)
+                print(f"Added: {arcname}", end='\r')
     
-    print(f"Archive created successfully: {archive_name}")
+    print(f"\nArchive created successfully: {archive_name}")
 
 
 def main():
@@ -117,23 +144,34 @@ def main():
     parser = argparse.ArgumentParser(
         description="Create tar or zip archives while respecting .tarignore rules."
     )
-    parser.add_argument("sources", nargs='+', help="Source directories or files to archive")
+    parser.add_argument("source_dir", help="Source directory to archive")
     parser.add_argument("-o", "--output", required=True, 
                         help="Name of the output archive file")
     parser.add_argument("-f", "--format", choices=["tar", "zip"], default="tar", 
-                        help="Archive format (tar or zip)")
+                        help="Archive format (tar or zip), defaults to tar")
+    parser.add_argument("-c", "--compress", action="store_true",
+                        help="Compress the tar archive (creates .tar.gz file)")
     parser.add_argument("-i", "--ignore-file", default=".tarignore",
                         help="Path to the .tarignore file (default: .tarignore)")
     
     args = parser.parse_args()
     
     # Add extension if not provided
-    if args.format == "tar" and not args.output.endswith((".tar", ".tar.gz")):
-        args.output += ".tar.gz"
+    if args.format == "tar":
+        if args.compress and not args.output.endswith((".tar.gz", ".tgz")):
+            args.output += ".tar.gz"
+        elif not args.output.endswith(".tar"):
+            args.output += ".tar"
     elif args.format == "zip" and not args.output.endswith(".zip"):
         args.output += ".zip"
     
-    create_archive(args.output, args.format, args.sources, args.ignore_file)
+    create_archive(
+        args.output, 
+        args.format, 
+        args.source_dir, 
+        args.ignore_file, 
+        compress=args.compress
+    )
 
 
 if __name__ == "__main__":
