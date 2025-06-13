@@ -33,6 +33,8 @@ eggs/
 .venv
 env/
 venv/
+**/venv/       # Match venv directories at any level
+**/env/        # Match env directories at any level
 ENV/
 env.bak/
 venv.bak/
